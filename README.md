@@ -66,6 +66,22 @@ python -m nanomaternalpfn.realdata \
 Reported metrics include accuracy, balanced accuracy, AUROC, log loss, Brier
 score, and expected calibration error.
 
+### Strict 5-fold frozen-transfer evaluation
+
+For the paper-facing UCI result, use the stricter outer-fold protocol:
+
+```bash
+python -m nanomaternalpfn.realdata_cv \
+  --checkpoint checkpoints/v1_prior_10000steps.pt \
+  --contexts-per-fold 20 \
+  --context 100
+```
+
+Each outer test fold is never used as context. Repeated contexts are sampled
+only from the other four folds. Repeats are averaged within each fold, and the
+final report gives mean, sample standard deviation, and a 95% t confidence
+interval across the five held-out folds.
+
 Dataset source:
 
 - UCI Machine Learning Repository, Maternal Health Risk, dataset 863
