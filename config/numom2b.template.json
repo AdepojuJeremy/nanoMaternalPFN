@@ -1,0 +1,18 @@
+{
+  "dataset_name": "nuMoM2b",
+  "outcome_name": "REPLACE_WITH_BINARY_OUTCOME",
+  "csv_path": "data/numom2b/analysis.csv",
+  "id_column": "REPLACE_WITH_PARTICIPANT_ID_COLUMN",
+  "feature_columns": [
+    "REPLACE_FEATURE_1",
+    "REPLACE_FEATURE_2",
+    "REPLACE_FEATURE_3",
+    "REPLACE_FEATURE_4",
+    "REPLACE_FEATURE_5",
+    "REPLACE_FEATURE_6"
+  ],
+  "target_column": "REPLACE_WITH_TARGET_COLUMN",
+  "positive_values": ["1"],
+  "negative_values": ["0"],
+  "missing_values": ["", "NA", "N/A", ".", "null"]
+}

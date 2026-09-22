@@ -116,3 +116,52 @@ standard deviation, and paired 95% t confidence intervals across the five outer
 folds. Positive differences favor nanoMaternalPFN for accuracy, balanced
 accuracy, and AUROC. Negative differences favor nanoMaternalPFN for log loss,
 Brier score, and ECE.
+
+
+## nuMoM2b controlled-data evaluation
+
+nuMoM2b is the next planned external cohort because it is a much closer
+clinical match to the maternal PFN setting than aggregate survey indicators.
+NICHD DASH requires an approved data request before study files can be
+downloaded. Controlled data must remain local and must not be committed.
+
+After approved DASH data have been prepared as a one-row-per-participant
+analysis CSV:
+
+```bash
+mkdir -p data/numom2b
+# place the local analysis CSV at data/numom2b/analysis.csv
+```
+
+Inspect the available columns:
+
+```bash
+python -m nanomaternalpfn.numom2b inspect \
+  --csv data/numom2b/analysis.csv
+```
+
+Create a local manifest from the committed template:
+
+```bash
+cp config/numom2b.template.json config/numom2b.local.json
+```
+
+Edit the local manifest to specify:
+
+- one unique participant ID column
+- exactly six numeric predictor columns
+- one binary outcome column
+- explicit positive and negative target values
+
+Then run the same strict frozen-transfer design used for UCI:
+
+```bash
+python -m nanomaternalpfn.numom2b evaluate \
+  --manifest config/numom2b.local.json \
+  --checkpoint checkpoints/v1_prior_10000steps.pt \
+  --contexts-per-fold 20 \
+  --context 100
+```
+
+The adapter uses complete cases only and rejects duplicate participant IDs.
+The local nuMoM2b data directory and local manifest are gitignored.
