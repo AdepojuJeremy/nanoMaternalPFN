@@ -66,23 +66,47 @@ def _state_tensor_bytes(model: nn.Module) -> int:
     return _tensor_bytes(model.state_dict())
 
 
-def _dynamic_int8(model: nn.Module) -> nn.Module:
+def _select_quantized_engine() -> str:
+    """Choose a usable eager INT8 CPU backend.
+
+    Apple Silicon PyTorch builds may expose quantization while defaulting to
+    NoQEngine. Prefer QNNPACK on ARM, then other supported CPU engines.
+    """
+
+    supported = tuple(torch.backends.quantized.supported_engines)
+    preferred = ("qnnpack", "x86", "fbgemm", "onednn")
+
+    for engine in preferred:
+        if engine in supported:
+            torch.backends.quantized.engine = engine
+            return engine
+
+    raise RuntimeError(
+        "No usable quantized CPU engine is available; "
+        f"supported_engines={supported!r}"
+    )
+
+
+def _dynamic_int8(model: nn.Module) -> tuple[nn.Module, str]:
+    engine = _select_quantized_engine()
+
     try:
         from torch.ao.quantization import quantize_dynamic
     except ImportError:
         from torch.quantization import quantize_dynamic
 
-    return quantize_dynamic(
+    quantized = quantize_dynamic(
         model,
         {nn.Linear},
         dtype=torch.qint8,
     )
+    return quantized, engine
 
 
 def prepare_variant(
     checkpoint: str,
     variant: str,
-) -> tuple[nn.Module, torch.device]:
+) -> tuple[nn.Module, torch.device, str | None]:
     if variant not in VARIANTS:
         raise ValueError(f"unknown variant: {variant}")
 
@@ -95,8 +119,10 @@ def prepare_variant(
     model.load_state_dict(torch.load(checkpoint, map_location="cpu"))
     model.eval()
 
+    quantized_engine = None
+
     if precision == "int8":
-        model = _dynamic_int8(model)
+        model, quantized_engine = _dynamic_int8(model)
         device = torch.device("cpu")
     else:
         device = torch.device(device_name)
@@ -104,7 +130,7 @@ def prepare_variant(
             model = model.half()
         model = model.to(device)
 
-    return model, device
+    return model, device, quantized_engine
 
 
 def benchmark_variant(
@@ -119,7 +145,7 @@ def benchmark_variant(
     if n_tasks < 1:
         raise ValueError("n_tasks must be at least 1")
 
-    model, device = prepare_variant(checkpoint, variant)
+    model, device, quantized_engine = prepare_variant(checkpoint, variant)
 
     warmup_task = generate_task(seed=seed_start)
     x_context = torch.from_numpy(warmup_task.X_context).unsqueeze(0).to(device)
@@ -162,8 +188,10 @@ def benchmark_variant(
     predictions = (p1 >= 0.5).astype(np.int64)
 
     return {
+        "status": "ok",
         "variant": variant,
         "device": device.type,
+        "quantized_engine": quantized_engine,
         "tasks": n_tasks,
         "accuracy": float((predictions == y).mean()),
         "log_loss": _binary_log_loss(y, p1),
@@ -207,11 +235,25 @@ def _run_worker(
     ]
     completed = subprocess.run(
         command,
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
         env=os.environ.copy(),
     )
+
+    if completed.returncode != 0:
+        stderr_lines = [
+            line.strip()
+            for line in completed.stderr.splitlines()
+            if line.strip()
+        ]
+        error = stderr_lines[-1] if stderr_lines else "worker failed"
+        return {
+            "status": "unsupported",
+            "variant": variant,
+            "error": error,
+        }
+
     return json.loads(completed.stdout)
 
 
@@ -261,7 +303,9 @@ def main() -> None:
     ]
 
     reference = next(
-        result for result in results if result["variant"] == "cpu-fp32"
+        result
+        for result in results
+        if result["variant"] == "cpu-fp32" and result["status"] == "ok"
     )
 
     print(f"held-out tasks: {args.tasks}")
@@ -270,10 +314,15 @@ def main() -> None:
     print()
 
     for result in results:
+        print(result["variant"])
+
+        if result["status"] != "ok":
+            print(f"  unsupported: {result['error']}")
+            continue
+
         accuracy_delta = result["accuracy"] - reference["accuracy"]
         ece_delta = result["ece"] - reference["ece"]
 
-        print(result["variant"])
         print(
             f"  accuracy {result['accuracy']:.3f} "
             f"({accuracy_delta:+.3f}) | "
@@ -287,6 +336,8 @@ def main() -> None:
             f"tensor state {result['state_tensor_mb']:.3f} MB | "
             f"peak RSS {result['peak_rss_mb']:.1f} MB"
         )
+        if result["quantized_engine"]:
+            print(f"  quantized engine: {result['quantized_engine']}")
 
 
 if __name__ == "__main__":
