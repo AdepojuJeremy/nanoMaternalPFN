@@ -10,3 +10,5 @@ build/
 htmlcov/
 .DS_Store
 data/generated/
+data/numom2b/
+config/numom2b.local.json
