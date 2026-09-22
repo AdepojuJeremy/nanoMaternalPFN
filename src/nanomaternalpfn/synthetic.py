@@ -1,13 +1,15 @@
-"""Minimal synthetic maternal-task generator for nanoMaternalPFN.
+"""Synthetic maternal-task generator for nanoMaternalPFN.
 
-This module intentionally starts simple. It produces *maternal-shaped* numerical
-classification tasks for testing a PFN training pipeline. The defaults are
-engineering priors, not validated clinical reference ranges or clinical risk
-rules.
+V1 keeps the same public API as V0 but increases task diversity with:
 
-The generator varies the predictive rule from task to task. That variation is
-the key property needed for PFN pretraining: the model should encounter many
-small prediction problems rather than one fixed synthetic dataset.
+- correlated maternal-shaped numerical features
+- nonlinear univariate effects
+- stronger pairwise interactions
+- gated effects
+- heterogeneous task families
+
+These are still engineering priors for PFN research. They are not validated
+clinical distributions, clinical thresholds, or clinical decision rules.
 """
 
 from __future__ import annotations
@@ -20,6 +22,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 
+GENERATOR_VERSION = "v1"
+
 FEATURE_NAMES: tuple[str, ...] = (
     "age_years",
     "gestational_age_weeks",
@@ -29,9 +33,6 @@ FEATURE_NAMES: tuple[str, ...] = (
     "glucose_mg_dl",
 )
 
-# Broad engineering defaults for generator V0.
-# They are not clinical thresholds and should later be replaced or calibrated
-# using documented maternal-health data sources.
 FEATURE_BOUNDS: dict[str, tuple[float, float]] = {
     "age_years": (15.0, 45.0),
     "gestational_age_weeks": (4.0, 42.0),
@@ -55,29 +56,98 @@ class SyntheticMaternalTask:
     metadata: dict[str, Any]
 
 
+def _sigmoid(x: NDArray[np.float64]) -> NDArray[np.float64]:
+    return 1.0 / (1.0 + np.exp(-x))
+
+
+def _scale_to_bounds(
+    unit_values: NDArray[np.float64],
+    feature_name: str,
+) -> NDArray[np.float64]:
+    low, high = FEATURE_BOUNDS[feature_name]
+    return low + unit_values * (high - low)
+
+
 def _sample_features(
     rng: np.random.Generator,
     n_patients: int,
 ) -> NDArray[np.float64]:
-    """Sample independent numerical maternal-shaped features.
+    """Sample correlated maternal-shaped numerical features.
 
-    Independence is deliberate in V0. Correlation, missingness, categorical
-    variables, longitudinal structure, and data-grounded marginals belong in
-    later generator versions.
+    The dependency structure is intentionally simple and only exists to create
+    a harder research prior. It is not a fitted model of a real population.
     """
 
+    age_latent = rng.normal(size=n_patients)
+    gestational_latent = rng.normal(size=n_patients)
+    bp_latent = rng.normal(size=n_patients)
+    metabolic_latent = rng.normal(size=n_patients)
+
+    age_z = age_latent
+    gestational_z = gestational_latent
+
+    systolic_z = (
+        0.75 * bp_latent
+        + 0.15 * metabolic_latent
+        + np.sqrt(1.0 - 0.75**2 - 0.15**2) * rng.normal(size=n_patients)
+    )
+    diastolic_z = (
+        0.75 * bp_latent
+        + 0.10 * metabolic_latent
+        + np.sqrt(1.0 - 0.75**2 - 0.10**2) * rng.normal(size=n_patients)
+    )
+    bmi_z = (
+        0.55 * metabolic_latent
+        + 0.15 * age_latent
+        + np.sqrt(1.0 - 0.55**2 - 0.15**2) * rng.normal(size=n_patients)
+    )
+    glucose_z = (
+        0.55 * metabolic_latent
+        + 0.10 * age_latent
+        + np.sqrt(1.0 - 0.55**2 - 0.10**2) * rng.normal(size=n_patients)
+    )
+
+    latent = np.column_stack(
+        [
+            age_z,
+            gestational_z,
+            systolic_z,
+            diastolic_z,
+            bmi_z,
+            glucose_z,
+        ]
+    )
+
+    unit = _sigmoid(latent)
+
     columns = [
-        rng.uniform(low, high, size=n_patients)
-        for low, high in (FEATURE_BOUNDS[name] for name in FEATURE_NAMES)
+        _scale_to_bounds(unit[:, i], name)
+        for i, name in enumerate(FEATURE_NAMES)
     ]
     return np.column_stack(columns)
+
+
+def _nonlinear_term(
+    x: NDArray[np.float64],
+    transform: str,
+    threshold: float,
+) -> NDArray[np.float64]:
+    if transform == "square":
+        return x**2
+    if transform == "absolute":
+        return np.abs(x)
+    if transform == "tanh":
+        return np.tanh(1.5 * x)
+    if transform == "hinge":
+        return np.maximum(0.0, x - threshold)
+    raise ValueError(f"unknown transform: {transform}")
 
 
 def _sample_task_rule(
     rng: np.random.Generator,
     X: NDArray[np.float64],
-) -> tuple[NDArray[np.float64], dict[str, Any]]:
-    """Sample a new outcome-generating rule for one synthetic task."""
+) -> tuple[NDArray[np.int64], dict[str, Any]]:
+    """Sample a heterogeneous nonlinear outcome rule for one task."""
 
     means = X.mean(axis=0, keepdims=True)
     scales = X.std(axis=0, keepdims=True)
@@ -85,25 +155,74 @@ def _sample_task_rule(
 
     n_features = X.shape[1]
 
-    # Random sparse-ish linear rule.
-    weights = rng.normal(0.0, 1.0, size=n_features)
-    active = rng.random(n_features) < 0.7
+    family = str(
+        rng.choice(
+            ["mostly_linear", "mixed_nonlinear", "interaction_heavy"],
+            p=[0.20, 0.50, 0.30],
+        )
+    )
+
+    if family == "mostly_linear":
+        active_probability = 0.70
+        nonlinear_count = int(rng.integers(1, 3))
+        interaction_count = int(rng.integers(0, 3))
+        gate_count = int(rng.integers(0, 2))
+    elif family == "mixed_nonlinear":
+        active_probability = 0.45
+        nonlinear_count = int(rng.integers(2, 5))
+        interaction_count = int(rng.integers(1, 4))
+        gate_count = int(rng.integers(0, 3))
+    else:
+        active_probability = 0.30
+        nonlinear_count = int(rng.integers(2, 5))
+        interaction_count = int(rng.integers(2, 5))
+        gate_count = int(rng.integers(1, 3))
+
+    linear_weights = rng.normal(0.0, 0.8, size=n_features)
+    active = rng.random(n_features) < active_probability
     if not np.any(active):
         active[rng.integers(0, n_features)] = True
-    weights *= active
+    linear_weights *= active
 
-    score = Xz @ weights
+    score = Xz @ linear_weights
 
-    # Add 0-3 randomly selected pairwise interactions.
+    transforms = ("square", "absolute", "tanh", "hinge")
+    nonlinear_metadata: list[dict[str, Any]] = []
+
+    for _ in range(nonlinear_count):
+        feature_index = int(rng.integers(0, n_features))
+        transform = str(rng.choice(transforms))
+        weight = float(rng.normal(0.0, 1.1))
+        threshold = float(rng.uniform(-0.75, 0.75))
+
+        term = _nonlinear_term(
+            Xz[:, feature_index],
+            transform,
+            threshold,
+        )
+        score += weight * term
+
+        nonlinear_metadata.append(
+            {
+                "feature": FEATURE_NAMES[feature_index],
+                "transform": transform,
+                "weight": weight,
+                "threshold": threshold if transform == "hinge" else None,
+            }
+        )
+
     pairs = list(combinations(range(n_features), 2))
-    n_interactions = int(rng.integers(0, 4))
     interaction_metadata: list[dict[str, Any]] = []
 
-    if n_interactions:
-        selected = rng.choice(len(pairs), size=n_interactions, replace=False)
+    if interaction_count:
+        selected = rng.choice(
+            len(pairs),
+            size=min(interaction_count, len(pairs)),
+            replace=False,
+        )
         for pair_index in np.atleast_1d(selected):
             i, j = pairs[int(pair_index)]
-            weight = float(rng.normal(0.0, 0.75))
+            weight = float(rng.normal(0.0, 1.0))
             score += weight * Xz[:, i] * Xz[:, j]
             interaction_metadata.append(
                 {
@@ -112,7 +231,32 @@ def _sample_task_rule(
                 }
             )
 
-    noise_std = float(rng.uniform(0.2, 1.0))
+    gate_metadata: list[dict[str, Any]] = []
+
+    for _ in range(gate_count):
+        gate_feature, effect_feature = rng.choice(
+            n_features,
+            size=2,
+            replace=False,
+        )
+        gate_feature = int(gate_feature)
+        effect_feature = int(effect_feature)
+        threshold = float(rng.uniform(-0.75, 0.75))
+        weight = float(rng.normal(0.0, 1.0))
+
+        gate = (Xz[:, gate_feature] > threshold).astype(np.float64)
+        score += weight * gate * Xz[:, effect_feature]
+
+        gate_metadata.append(
+            {
+                "gate_feature": FEATURE_NAMES[gate_feature],
+                "effect_feature": FEATURE_NAMES[effect_feature],
+                "threshold": threshold,
+                "weight": weight,
+            }
+        )
+
+    noise_std = float(rng.uniform(0.25, 0.9))
     score += rng.normal(0.0, noise_std, size=X.shape[0])
 
     target_prevalence = float(rng.uniform(0.2, 0.8))
@@ -120,11 +264,15 @@ def _sample_task_rule(
     y = (score >= threshold).astype(np.int64)
 
     metadata = {
+        "generator_version": GENERATOR_VERSION,
+        "task_family": family,
         "linear_weights": {
             name: float(weight)
-            for name, weight in zip(FEATURE_NAMES, weights, strict=True)
+            for name, weight in zip(FEATURE_NAMES, linear_weights, strict=True)
         },
+        "nonlinear_effects": nonlinear_metadata,
         "interactions": interaction_metadata,
+        "gated_effects": gate_metadata,
         "noise_std": noise_std,
         "target_positive_prevalence": target_prevalence,
         "positive_prevalence": float(y.mean()),
@@ -138,27 +286,7 @@ def generate_task(
     n_patients: int = 150,
     n_context: int = 100,
 ) -> SyntheticMaternalTask:
-    """Generate one reproducible binary maternal-health-shaped task.
-
-    Parameters
-    ----------
-    seed:
-        Random seed. The same seed and arguments reproduce the same task.
-    n_patients:
-        Total number of rows in the synthetic task.
-    n_context:
-        Number of labeled context rows. Remaining rows become query rows.
-
-    Returns
-    -------
-    SyntheticMaternalTask
-        Context/query arrays plus metadata describing the sampled task rule.
-
-    Notes
-    -----
-    This is a research scaffold for PFN pretraining. It does not simulate a
-    validated maternal population and must not be used for clinical decisions.
-    """
+    """Generate one reproducible binary maternal-health-shaped task."""
 
     if n_patients < 4:
         raise ValueError("n_patients must be at least 4")
@@ -170,7 +298,6 @@ def generate_task(
     X = _sample_features(rng, n_patients)
     y, metadata = _sample_task_rule(rng, X)
 
-    # Randomize row order before the context/query split.
     order = rng.permutation(n_patients)
     X = X[order]
     y = y[order]
@@ -192,12 +319,12 @@ def generate_task(
 
 
 def main() -> None:
-    """Generate one task and print a compact smoke-test summary."""
-
     task = generate_task(seed=42)
     prevalence = np.concatenate([task.y_context, task.y_query]).mean()
 
     print("nanoMaternalPFN synthetic task")
+    print(f"generator: {task.metadata['generator_version']}")
+    print(f"family: {task.metadata['task_family']}")
     print(f"context: {task.X_context.shape}")
     print(f"query:   {task.X_query.shape}")
     print(f"positive prevalence: {prevalence:.3f}")
