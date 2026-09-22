@@ -13,6 +13,8 @@ dependencies = [
     "torch>=2.2",
     "scikit-learn>=1.4",
     "ucimlrepo>=0.0.7",
+    "requests>=2.31",
+    "certifi>=2024.0",
 ]
 
 [project.optional-dependencies]
