@@ -45,7 +45,6 @@ class TargetEncoder(nn.Module):
         if y_context.ndim == 2:
             y_context = y_context.unsqueeze(-1)
 
-        y_context = y_context.float()
         placeholder = y_context.mean(dim=1, keepdim=True).expand(
             -1, n_query, -1
         )
@@ -80,7 +79,6 @@ class MaternalTransformerBlock(nn.Module):
     def forward(self, x: torch.Tensor, n_context: int) -> torch.Tensor:
         batch, rows, columns, d_model = x.shape
 
-        # Attention across feature/target columns within each patient.
         feature_tokens = x.reshape(batch * rows, columns, d_model)
         feature_update, _ = self.feature_attention(
             feature_tokens,
@@ -91,7 +89,6 @@ class MaternalTransformerBlock(nn.Module):
         feature_tokens = self.norm_features(feature_tokens + feature_update)
         x = feature_tokens.reshape(batch, rows, columns, d_model)
 
-        # Attention across patients within each feature column.
         patient_tokens = x.transpose(1, 2).reshape(
             batch * columns, rows, d_model
         )
@@ -174,10 +171,14 @@ class NanoMaternalPFN(nn.Module):
 
         n_context = x_context.shape[1]
         n_query = x_query.shape[1]
+        compute_dtype = next(self.parameters()).dtype
 
-        x_all = torch.cat([x_context, x_query], dim=1).float()
+        x_all = torch.cat([x_context, x_query], dim=1).to(
+            dtype=compute_dtype
+        )
+        y_context = y_context.to(dtype=compute_dtype)
+
         x_tokens = self.feature_encoder(x_all, n_context)
-
         y_tokens = self.target_encoder(y_context, n_query)
         tokens = torch.cat([x_tokens, y_tokens], dim=2)
 
