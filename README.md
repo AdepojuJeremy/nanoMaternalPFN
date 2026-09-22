@@ -165,3 +165,39 @@ python -m nanomaternalpfn.numom2b evaluate \
 
 The adapter uses complete cases only and rejects duplicate participant IDs.
 The local nuMoM2b data directory and local manifest are gitignored.
+
+
+## MASS birthwt public external benchmark
+
+A second no-approval external benchmark uses the public MASS `birthwt`
+dataset (189 pregnancies). The target is low birth weight (<2.5 kg).
+
+Predictors:
+
+- maternal age
+- maternal weight at last menstrual period
+- race code
+- smoking during pregnancy
+- previous premature labours
+- hypertension history
+- uterine irritability
+- first-trimester physician visits
+
+The recorded infant birth-weight column is intentionally excluded because it
+directly defines the target and would cause leakage.
+
+This benchmark also tests feature-count transfer: nanoMaternalPFN was
+pretrained on six synthetic columns, while `birthwt` supplies eight predictor
+columns.
+
+Run the same strict five-fold protocol:
+
+```bash
+python -m nanomaternalpfn.birthwt \
+  --checkpoint checkpoints/v1_prior_10000steps.pt \
+  --contexts-per-fold 20 \
+  --context 100
+```
+
+The dataset is downloaded automatically from the public Rdatasets mirror of
+the MASS package; no account or data-access approval is required.
