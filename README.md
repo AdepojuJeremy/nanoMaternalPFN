@@ -4,34 +4,12 @@ A lightweight tabular foundation model research project for maternal health.
 
 ## First milestone: synthetic maternal tasks
 
-The first implementation is a minimal synthetic task generator for PFN-style pretraining.
+The project begins with synthetic PFN-style pretraining tasks. The synthetic
+prior is an engineering scaffold, not a validated clinical population model or
+clinical decision rule.
 
-It does **not** attempt to simulate a validated clinical population. The feature bounds and outcome rules in V0 are engineering priors used to test the learning pipeline. They must not be interpreted as clinical thresholds or used for clinical decisions.
-
-Each call samples a new small binary classification problem:
-
-```text
-maternal-shaped features
-        ↓
-task-specific linear effects
-        ↓
-optional pairwise interactions
-        ↓
-noise + variable class prevalence
-        ↓
-context patients + query patients
-```
-
-The current V0 features are:
-
-- age
-- gestational age
-- systolic blood pressure
-- diastolic blood pressure
-- BMI
-- glucose
-
-The important PFN property is that the **prediction rule changes between tasks**.
+The current generator uses six numerical maternal-shaped features and varies
+the predictive rule from task to task.
 
 ## Install
 
@@ -39,7 +17,7 @@ The important PFN property is that the **prediction rule changes between tasks**
 python -m pip install -e ".[dev]"
 ```
 
-## Generate one task
+## Generate one synthetic task
 
 ```python
 from nanomaternalpfn import generate_task
@@ -50,68 +28,56 @@ print(task.X_context.shape)  # (100, 6)
 print(task.y_context.shape)  # (100,)
 print(task.X_query.shape)    # (50, 6)
 print(task.y_query.shape)    # (50,)
-print(task.metadata)
 ```
 
-Or run:
+## Train
 
 ```bash
-python -m nanomaternalpfn.synthetic
+python -m nanomaternalpfn.train \
+  --steps 10000 \
+  --batch-size 8 \
+  --save checkpoints/v1_prior_10000steps.pt
 ```
 
-## Prototype training
+## UCI Maternal Health Risk evaluation
 
-Train on freshly generated tasks:
+The first real-data experiment uses UCI Maternal Health Risk dataset 863.
+
+The current model head is binary, so the target is:
+
+```text
+high risk = 1
+low risk or mid risk = 0
+```
+
+The pretrained PFN remains frozen. Each evaluation episode supplies 100
+labeled context rows and 50 query rows. Logistic Regression and Random Forest
+are fitted only on the same context rows.
+
+Exact duplicate rows are removed, and identical feature rows with conflicting
+labels are removed before episode sampling.
 
 ```bash
-python -m nanomaternalpfn.train --steps 100 --batch-size 8
+python -m nanomaternalpfn.realdata \
+  --checkpoint checkpoints/v1_prior_10000steps.pt \
+  --episodes 100
 ```
 
-On Apple Silicon the trainer automatically uses MPS when available.
+Reported metrics include accuracy, balanced accuracy, AUROC, log loss, Brier
+score, and expected calibration error.
 
-For a quick smoke test:
+Dataset source:
 
-```bash
-python -m nanomaternalpfn.train --steps 20 --batch-size 4
-```
-
-The purpose of this stage is only to confirm that optimization works and that query loss can decrease before scaling pretraining.
+- UCI Machine Learning Repository, Maternal Health Risk, dataset 863
+- DOI: https://doi.org/10.24432/C5DP5D
+- License: CC BY 4.0
 
 ## Run tests
 
 ```bash
-pytest
-```
-
-## V0 acceptance criteria
-
-- 150 patients by default
-- 6 numerical maternal-shaped features
-- 100 context rows and 50 query rows by default
-- no missing values
-- binary outcome with both classes represented
-- reproducible tasks for a fixed seed
-- different task rules across seeds
-- feature values remain inside explicit generator bounds
-
-## Planned generator progression
-
-```text
-V0  Independent numerical features
- ↓
-V1  Nonlinear effects and richer interactions
- ↓
-V2  Class imbalance controls
- ↓
-V3  Missingness
- ↓
-V4  Categorical maternal variables
- ↓
-V5  Correlated variables
- ↓
-V6  Data-grounded maternal priors
+pytest -q
 ```
 
 ## Status
 
-Early research prototype.
+Early research prototype. Not for clinical use.
