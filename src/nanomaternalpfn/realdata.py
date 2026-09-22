@@ -12,10 +12,15 @@ on the same context rows used by the PFN.
 from __future__ import annotations
 
 import argparse
+import csv
+import io
+import zipfile
 from dataclasses import dataclass
 from typing import Any
 
+import certifi
 import numpy as np
+import requests
 import torch
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -32,6 +37,10 @@ from .train import choose_device
 
 
 UCI_DATASET_ID = 863
+UCI_STATIC_ZIP_URL = (
+    "https://archive.ics.uci.edu/static/public/863/"
+    "maternal+health+risk.zip"
+)
 UCI_FEATURES: tuple[str, ...] = (
     "Age",
     "SystolicBP",
@@ -120,23 +129,95 @@ def clean_duplicate_rows(
     return X, y, stats
 
 
-def load_uci_maternal_health() -> RealDataset:
-    """Fetch and clean UCI Maternal Health Risk (dataset 863)."""
-    dataset = fetch_ucirepo(id=UCI_DATASET_ID)
+def _parse_uci_csv_text(text: str) -> tuple[np.ndarray, np.ndarray]:
+    """Parse the official UCI CSV representation."""
+    reader = csv.DictReader(io.StringIO(text))
+    fieldnames = reader.fieldnames or []
 
-    features = dataset.data.features
-    targets = dataset.data.targets
-
-    missing = [name for name in UCI_FEATURES if name not in features.columns]
+    required = [*UCI_FEATURES, "RiskLevel"]
+    missing = [name for name in required if name not in fieldnames]
     if missing:
-        raise ValueError(f"missing UCI feature columns: {missing}")
+        raise ValueError(f"missing UCI CSV columns: {missing}")
 
-    X = features.loc[:, list(UCI_FEATURES)].to_numpy(dtype=np.float32)
+    feature_rows: list[list[float]] = []
+    labels: list[str] = []
 
-    if targets.shape[1] != 1:
-        raise ValueError("expected exactly one UCI target column")
+    for row in reader:
+        feature_rows.append([float(row[name]) for name in UCI_FEATURES])
+        labels.append(row["RiskLevel"])
 
-    y = map_risk_labels(targets.iloc[:, 0].to_numpy())
+    if not feature_rows:
+        raise ValueError("UCI CSV contained no rows")
+
+    X = np.asarray(feature_rows, dtype=np.float32)
+    y = map_risk_labels(np.asarray(labels, dtype=object))
+    return X, y
+
+
+def _load_uci_static_zip() -> tuple[np.ndarray, np.ndarray]:
+    """Download the official UCI ZIP using certifi-backed TLS verification."""
+    response = requests.get(
+        UCI_STATIC_ZIP_URL,
+        timeout=30,
+        verify=certifi.where(),
+    )
+    response.raise_for_status()
+
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        csv_names = [
+            name
+            for name in archive.namelist()
+            if name.lower().endswith(".csv")
+        ]
+        if len(csv_names) != 1:
+            raise ValueError(
+                "expected exactly one CSV in UCI archive; "
+                f"found {csv_names}"
+            )
+
+        with archive.open(csv_names[0]) as handle:
+            text = handle.read().decode("utf-8-sig")
+
+    return _parse_uci_csv_text(text)
+
+
+def load_uci_maternal_health() -> RealDataset:
+    """Fetch and clean UCI Maternal Health Risk (dataset 863).
+
+    The normal path uses ucimlrepo. If the local Python installation cannot
+    validate the certificate chain used by pandas/urllib, fall back to UCI's
+    official static ZIP using requests with certifi's CA bundle.
+    """
+    source = "ucimlrepo"
+
+    try:
+        dataset = fetch_ucirepo(id=UCI_DATASET_ID)
+
+        features = dataset.data.features
+        targets = dataset.data.targets
+
+        missing = [
+            name for name in UCI_FEATURES if name not in features.columns
+        ]
+        if missing:
+            raise ValueError(f"missing UCI feature columns: {missing}")
+
+        X = features.loc[:, list(UCI_FEATURES)].to_numpy(dtype=np.float32)
+
+        if targets.shape[1] != 1:
+            raise ValueError("expected exactly one UCI target column")
+
+        y = map_risk_labels(targets.iloc[:, 0].to_numpy())
+    except Exception as primary_error:
+        try:
+            X, y = _load_uci_static_zip()
+            source = "uci_static_zip_certifi_fallback"
+        except Exception as fallback_error:
+            raise RuntimeError(
+                "Unable to fetch UCI Maternal Health Risk through either "
+                "ucimlrepo or the official static ZIP fallback."
+            ) from fallback_error
+
     X, y, duplicate_stats = clean_duplicate_rows(X, y)
 
     if not np.isfinite(X).all():
@@ -153,6 +234,7 @@ def load_uci_maternal_health() -> RealDataset:
             "target": "high risk vs low/mid risk",
             "feature_names": UCI_FEATURES,
             "high_risk_prevalence": float(y.mean()),
+            "data_source": source,
             **duplicate_stats,
         },
     )
