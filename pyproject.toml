@@ -12,6 +12,7 @@ dependencies = [
     "numpy>=1.24",
     "torch>=2.2",
     "scikit-learn>=1.4",
+    "ucimlrepo>=0.0.7",
 ]
 
 [project.optional-dependencies]
