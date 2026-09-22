@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from nanomaternalpfn.realdata import (
+    _parse_uci_csv_text,
     clean_duplicate_rows,
     episode_indices,
     map_risk_labels,
@@ -63,3 +64,16 @@ def test_episode_indices_are_reproducible_disjoint_and_stratified():
     assert set(context_a).isdisjoint(set(query_a))
     assert y[context_a].mean() == pytest.approx(0.5)
     assert y[query_a].mean() == pytest.approx(0.5)
+
+
+def test_parse_uci_csv_text():
+    text = (
+        "Age,SystolicBP,DiastolicBP,BS,BodyTemp,HeartRate,RiskLevel\n"
+        "25,120,80,7.5,98,70,low risk\n"
+        "35,140,90,12.0,99,85,high risk\n"
+    )
+
+    X, y = _parse_uci_csv_text(text)
+
+    assert X.shape == (2, 6)
+    np.testing.assert_array_equal(y, np.array([0, 1]))
