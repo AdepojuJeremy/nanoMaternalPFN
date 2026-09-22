@@ -53,11 +53,29 @@ print(task.y_query.shape)    # (50,)
 print(task.metadata)
 ```
 
-Or run the module directly:
+Or run:
 
 ```bash
 python -m nanomaternalpfn.synthetic
 ```
+
+## Prototype training
+
+Train on freshly generated tasks:
+
+```bash
+python -m nanomaternalpfn.train --steps 100 --batch-size 8
+```
+
+On Apple Silicon the trainer automatically uses MPS when available.
+
+For a quick smoke test:
+
+```bash
+python -m nanomaternalpfn.train --steps 20 --batch-size 4
+```
+
+The purpose of this stage is only to confirm that optimization works and that query loss can decrease before scaling pretraining.
 
 ## Run tests
 
