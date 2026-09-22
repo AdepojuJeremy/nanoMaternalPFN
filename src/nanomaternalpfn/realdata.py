@@ -431,6 +431,7 @@ def main() -> None:
 
     print("UCI Maternal Health Risk")
     print("target: high risk vs low/mid risk")
+    print(f"data source: {data.metadata['data_source']}")
     print(
         f"rows: {data.metadata['original_rows']} raw -> "
         f"{data.metadata['final_rows']} evaluation"
