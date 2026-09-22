@@ -97,3 +97,22 @@ pytest -q
 ## Status
 
 Early research prototype. Not for clinical use.
+
+
+### Paired fold-wise model comparisons
+
+Use the same strict 5-fold protocol to compare nanoMaternalPFN directly against
+each baseline on matched held-out folds:
+
+```bash
+python -m nanomaternalpfn.realdata_compare \
+  --checkpoint checkpoints/v1_prior_10000steps.pt \
+  --contexts-per-fold 20 \
+  --context 100
+```
+
+The command reports nanoMaternalPFN-minus-baseline mean differences, sample
+standard deviation, and paired 95% t confidence intervals across the five outer
+folds. Positive differences favor nanoMaternalPFN for accuracy, balanced
+accuracy, and AUROC. Negative differences favor nanoMaternalPFN for log loss,
+Brier score, and ECE.
