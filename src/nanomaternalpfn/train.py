@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
+
 import numpy as np
 import torch
 from torch import nn
@@ -75,6 +77,13 @@ def train_step(
     return float(loss.detach().cpu()), float(accuracy.detach().cpu())
 
 
+def save_checkpoint(model: NanoMaternalPFN, path: str | Path) -> None:
+    """Save model weights."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(model.state_dict(), path)
+
+
 def train(
     *,
     steps: int = 100,
@@ -126,6 +135,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--save", type=str, default=None)
     parser.add_argument(
         "--device",
         type=str,
@@ -134,13 +144,17 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    train(
+    model = train(
         steps=args.steps,
         batch_size=args.batch_size,
         learning_rate=args.learning_rate,
         seed=args.seed,
         device_name=args.device,
     )
+
+    if args.save:
+        save_checkpoint(model, args.save)
+        print(f"saved: {args.save}")
 
 
 if __name__ == "__main__":
